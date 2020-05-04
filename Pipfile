@@ -17,6 +17,7 @@ aiomonitor = "*"
 prometheus-client = "<0.7.0"
 thoth-sourcemanagement = "*"
 thoth-messaging = "*"
+prometheus-async = {extras = ["aiohttp"],version = "*"}
 
 [requires]
 python_version = "3.6"

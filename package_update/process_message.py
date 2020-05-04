@@ -24,7 +24,8 @@ from thoth.python import Source
 from thoth.sourcemanagement.sourcemanagement import SourceManagement
 from thoth.sourcemanagement.enums import ServiceType
 
-from prometheus_client import Summary
+from prometheus_client import Histogram
+from prometheus_async.aio import time
 
 import asyncio
 import logging
@@ -32,7 +33,6 @@ import faust
 import os
 import ssl
 from urllib.parse import urlparse
-from time import time
 import re
 
 init_logging()
@@ -62,7 +62,7 @@ graph = GraphDatabase()
 graph.connect()
 
 
-REQUEST_TIME = Summary('request_processing_seconds', 'Time spent processing request')
+REQUEST_TIME = Histogram('request_processing_seconds', 'Time spent processing request')
 
 
 def git_source_from_url(url: str) -> SourceManagement:
@@ -80,8 +80,7 @@ def git_source_from_url(url: str) -> SourceManagement:
         raise NotImplementedError("There is no token for this service type")
     return SourceManagement(service_type, res.scheme + "://" + res.netloc, token, res.path)
 
-
-@REQUEST_TIME.time()
+@time(REQUEST_TIME)
 def process_mismatch(mismatch):
     """Process a hash mismatch message from package-update producer."""
     try:
@@ -126,7 +125,7 @@ def process_mismatch(mismatch):
         gitservice_repo.open_issue_if_not_exist(issue_title, issue_body)
 
 
-@REQUEST_TIME.time()
+@time(REQUEST_TIME)
 def process_missing_package(package):
     """Process a missing package message from package-update producer."""
     repositories = graph.get_adviser_run_origins_all(
@@ -148,7 +147,7 @@ def process_missing_package(package):
             _OPENSHIFT.schedule_kebechet_run_url(repo, gitservice_repo.service_type.name)
 
 
-@REQUEST_TIME.time()
+@time(REQUEST_TIME)
 def process_missing_version(version):
     """Process a missing version message from package-update producer."""
     graph.update_missing_flag_package_version(
