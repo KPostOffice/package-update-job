@@ -21,7 +21,8 @@ from thoth.storages import GraphDatabase
 from thoth.python import AIOSource, AsyncIterableVersions
 from thoth.python import Source
 from thoth.common import init_logging
-from thoth.messaging import MissingPackageMessage, MissingVersionMessage, HashMismatchMessage, MessageBase
+from thoth.messaging import MissingPackageMessage, MissingVersionMessage, HashMismatchMessage
+from thoth.messaging.producer import create_producer, publish_to_topic
 
 import asyncio
 import logging
@@ -39,7 +40,7 @@ init_logging()
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.info("Thoth package update producer v%s", __package_update_version__)
 
-app = MessageBase().app
+producer = create_producer()  # by default gets config from environment variables
 SEMAPHORE_LIMIT = int(os.getenv("THOTH_PACKAGE_UPDATE_SEMAPHORE_LIMIT", 1000))
 async_sem = asyncio.Semaphore(SEMAPHORE_LIMIT)
 COMPONENT_NAME = "package-update-job"
@@ -53,6 +54,8 @@ def redirect_exception_message(func):
             _LOGGER.warning(e)
     return inner_function
 
+# a semaphore is required to circumvent errors with making thousands of aiohttp errors
+# https://pawelmhm.github.io/asyncio/python/aiohttp/2016/04/22/asyncio-aiohttp.html
 def with_semaphore(async_sem) -> Callable:
     """Only have N async functions running at the same time."""
     def somedec_outer(fn):
@@ -85,12 +88,16 @@ async def _check_package_availability(
     if not package[0] in src["packages"]:
         removed_packages.add((package[1], package[0]))
         try:
-            await missing_package.publish_to_topic(missing_package.MessageContents(
-                index_url=package[1],
-                package_name=package[0],
-                component_name=COMPONENT_NAME,
-                service_version=__package_update_version__,
-            ))
+            publish_to_topic(
+                producer,
+                missing_package,
+                missing_package.MessageContents(
+                    index_url=package[1],
+                    package_name=package[0],
+                    component_name=COMPONENT_NAME,
+                    service_version=__package_update_version__,
+                ),
+            )
             _LOGGER.info("%r no longer provides %r", package[1], package[0])
             return False
         except Exception as e:
@@ -110,7 +117,9 @@ async def _check_hashes(
 ) -> bool:
     if not package_version[1] in package_versions.versions:
         try:
-            await missing_version.publish_to_topic(
+            publish_to_topic(
+                producer,
+                missing_version,
                 missing_version.MessageContents(
                     index_url=package_version[2],
                     package_name=package_version[0],
@@ -137,7 +146,9 @@ async def _check_hashes(
     )
     if not source_hashes == stored_hashes:
         try:
-            await hash_mismatch.publish_to_topic(
+            publish_to_topic(
+                producer,
+                hash_mismatch,
                 hash_mismatch.MessageContents(
                     index_url=package_version[2],
                     package_name=package_version[0],
@@ -171,7 +182,6 @@ async def _get_all_versions(
             "404 error retrieving versions for: %r on %r", package_name, source,
         )
 
-@app.command()
 async def main():
     """Run package-update."""
     graph = GraphDatabase()
